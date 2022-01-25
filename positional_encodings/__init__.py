@@ -1,4 +1,5 @@
 from positional_encodings.positional_encodings import (
+    FixEncoding,
     PositionalEncoding1D,
     PositionalEncoding2D,
     PositionalEncoding3D,
