@@ -26,14 +26,9 @@ pip install positional-encodings
 
 The repo comes with the three main positional encoding models,
 `PositionalEncoding{1,2,3}D`. In addition, there are a `Summer` class that adds
-<<<<<<< HEAD
-the input tensor to the positional encodings a and `FixEncoding` class for when 
-dealing with a fixed input shape. that greatly decreases the run time. See the first example for more info.
-=======
 the input tensor to the positional encodings a and `FixEncoding` class that
 saves computation by not necessarily computing the tensor every forward pass.
 See the `FixEncoding` section for more info.
->>>>>>> 9b9c8fa2446f236085848370e288ac84b99c42dc
 
 ```python3
 import torch
@@ -45,21 +40,13 @@ p_enc_1d_model = PositionalEncoding1D(10)
 # Return the inputs with the position encoding added
 p_enc_1d_model_sum = Summer(PositionalEncoding1D(10))
 
-<<<<<<< HEAD
-# Returns the same as p_enc_1d_model but much faster
-=======
 # Returns the same as p_enc_1d_model but saves it for later
->>>>>>> 9b9c8fa2446f236085848370e288ac84b99c42dc
 p_enc_1d_model_fixed = FixEncoding(PositionalEncoding1D(10), (6, ))
 
 x = torch.rand(1,6,10)
 penc_no_sum = p_enc_1d_model(x) # penc_no_sum.shape == (1, 6, 10)
 penc_sum = p_enc_1d_model_sum(x)
-<<<<<<< HEAD
-penc_fixed = p_enc_1d_model_fixed(x) # This ran 100x faster
-=======
 penc_fixed = p_enc_1d_model_fixed(x) # The encoding is saved for later, making subsequent forward passes faster.
->>>>>>> 9b9c8fa2446f236085848370e288ac84b99c42dc
 print(penc_no_sum + x == penc_sum) # True
 ```
 
