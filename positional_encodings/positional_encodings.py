@@ -82,7 +82,7 @@ class PositionalEncoding2D(nn.Module):
         emb[:, :, : self.channels] = emb_x
         emb[:, :, self.channels : 2 * self.channels] = emb_y
 
-        return emb[None, :, :, :orig_ch].repeat(tensor.shape[0], 1, 1, 1)
+        return emb[None, :, :, :orig_ch].repeat(batch_size, 1, 1, 1)
 
 
 class PositionalEncodingPermute2D(nn.Module):
@@ -92,6 +92,84 @@ class PositionalEncodingPermute2D(nn.Module):
         """
         super(PositionalEncodingPermute2D, self).__init__()
         self.penc = PositionalEncoding2D(channels)
+
+    def forward(self, tensor):
+        tensor = tensor.permute(0, 2, 3, 1)
+        enc = self.penc(tensor)
+        return enc.permute(0, 3, 1, 2)
+
+    @property
+    def org_channels(self):
+        return self.penc.org_channels
+
+
+class DiagonalPositionalEncoding2D(nn.Module):
+    def __init__(self, channels):
+        """
+        :param channels: The last dimension of the tensor you want to apply pos emb to.
+        """
+        super(DiagonalPositionalEncoding2D, self).__init__()
+        self.org_channels = channels
+        channels = int(np.ceil(channels / 4) * 2)
+        self.channels = channels
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+        self.register_buffer("inv_freq", inv_freq)
+
+    def forward(self, tensor):
+        """
+        :param tensor: A 4d tensor of size (batch_size, x, y, ch)
+        :return: Diagonal Positional Encoding Matrix of size (batch_size, x, y, ch)
+        """
+        if len(tensor.shape) != 4:
+            raise RuntimeError("The input tensor has to be 4d!")
+        batch_size, x, y, orig_ch = tensor.shape
+        diagonal_len = x + y - 1
+        pos = torch.arange(diagonal_len, device=tensor.device).type(self.inv_freq.type())
+
+        # Diagonal l
+        sin_inp_l = torch.einsum("i,j->ij", pos, self.inv_freq)
+        emb_l = torch.cat((sin_inp_l.sin(), sin_inp_l.cos()), dim=-1)
+        emb_rep_l = torch.zeros((x, diagonal_len, self.channels), device=tensor.device).type(
+            tensor.type()
+        )
+        emb_rep_l[:,:,:]=emb_l
+
+        # Diagonal r
+        sin_inp_r = torch.einsum("i,j->ij", pos-x+1, self.inv_freq)
+        emb_r = torch.cat((sin_inp_r.sin(), sin_inp_r.cos()), dim=-1)
+        emb_rep_r = torch.zeros((x, diagonal_len, self.channels), device=tensor.device).type(
+            tensor.type()
+        )
+        emb_rep_r[:,:,:]=emb_r
+        
+        # Selection masks
+        d = x + y -1
+        x_s = torch.arange(x)[:,None] * torch.ones(d)
+        y_s = torch.ones(x)[:,None] * torch.arange(d)
+        
+        zr_s = x_s+y_s
+        fr_s = (zr_s >= x-1) & (zr_s < d)
+
+        zl_s = y_s - x_s
+        fl_s = (zl_s >= 0) & (zl_s <= d-x)
+
+        # Selection
+        emb_s = torch.zeros((x, y, 2*self.channels), device=tensor.device).type(
+            tensor.type()
+        )
+        emb_s[:,:,:self.channels] = emb_rep_r[fr_s].view(x,y,self.channels)
+        emb_s[:,:,self.channels:] = emb_rep_l[fl_s].view(x,y,self.channels)
+
+        return emb_s[None, :, :, :orig_ch].repeat(batch_size, 1, 1, 1)
+
+
+class DiagonalPositionalEncodingPermute2D(nn.Module):
+    def __init__(self, channels):
+        """
+        Accepts (batchsize, ch, x, y) instead of (batchsize, x, y, ch)
+        """
+        super(DiagonalPositionalEncodingPermute2D, self).__init__()
+        self.penc = DiagonalPositionalEncoding2D(channels)
 
     def forward(self, tensor):
         tensor = tensor.permute(0, 2, 3, 1)
@@ -193,3 +271,43 @@ class FixEncoding(nn.Module):
             )
             self.batch_size = tensor.shape[0]
         return self.repeated_pos_encoding
+
+class DynamicEncoding(nn.Module):
+    """
+    :param pos_encoder: instance of PositionalEncoding1D, PositionalEncoding2D or PositionalEncoding3D
+    :param median_batch_size: The most common batch size
+    Example:
+    p_enc_2d = DynamicEncoding(PositionalEncoding2D(32), 16)
+    inputs = torch.randn(16, 128, 128, 32)
+    p_enc_2d(inputs)
+    """
+
+    def __init__(self, pos_encoder, median_batch_size:int):
+        super(DynamicEncoding, self).__init__()
+        self.median_batch_size:int = median_batch_size
+        self.pos_encoder = pos_encoder
+        self.pos_encodings = {}
+        self.batch_pos_encodings = {}
+        self.batch_size = 0
+
+    def forward(self, tensor):
+        batch_size = tensor.shape[0]
+        shape = tensor.shape[1:-1]
+        dim = len(shape)
+        # Check if the pos encoding has already been used with the corresponding batch size
+        if shape not in self.batch_pos_encodings:
+            if shape not in self.pos_encodings:
+                pos_encoding = self.pos_encoder(
+                    torch.ones(1, *shape, self.pos_encoder.org_channels)
+                ).to(tensor.device)
+                self.pos_encodings[shape] = pos_encoding
+            else:
+                pos_encoding = self.pos_encodings[shape]
+            batch_pos_encoding = pos_encoding.to(tensor.device).repeat(
+                batch_size, *(dim + 1) * [1]
+            )
+            if batch_size == self.median_batch_size:
+                self.batch_pos_encodings[shape] = batch_pos_encoding
+        else:
+            batch_pos_encoding = self.pos_encodings[shape]
+        return batch_pos_encoding

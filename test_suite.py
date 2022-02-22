@@ -181,3 +181,11 @@ def test_tf_summer():
         np.sum(np.abs((model_wo_sum(z) + z).numpy() - model_with_sum(z).numpy()))
         < 0.0001
     ), "The tf summer is not working properly!"
+
+def test_diagonal_position_encoding():
+
+    emb_sm = FixEncoding(DiagonalPositionalEncoding2D(16), (6,5)).pos_encoding[0]
+    emb_md = FixEncoding(DiagonalPositionalEncoding2D(16), (11,13)).pos_encoding[0]
+    
+    diff = (emb_md[:5,:5] - emb_sm[:5,:5])
+    assert np.sum(np.abs(diff.cpu().numpy())) == 0, "The diagonal position encoder is size dependend"
